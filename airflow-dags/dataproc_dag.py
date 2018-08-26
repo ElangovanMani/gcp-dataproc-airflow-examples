@@ -64,6 +64,10 @@ with dag:
         num_workers=2,
         master_disk_size=50,
         worker_disk_size=50,
+        image_version='preview',
+        internal_ip_only=True,
+        tags=['dataproc'],
+        labels={'dataproc-cluster': CLUSTER_NAME},
         zone=Variable.get('zone'),
         subnetwork_uri='projects/{}/region/{}/subnetworks/{}'.format(
             Variable.get('project'),
@@ -72,9 +76,32 @@ with dag:
         service_account=Variable.get('serviceAccount'),
     )
 
-    run_job = DataProcSparkOperator(
+    class PatchedDataProcSparkOperator(DataProcSparkOperator):
+        """
+        Workaround for DataProcSparkOperator.execute()
+        not passing project_id to DataProcHook
+        """
+        def __init__(self, project_id=None, *args, **kwargs):
+            self.project_id = project_id
+            super(PatchedDataProcSparkOperator, self).__init__(*args, **kwargs)
+
+        def execute(self, context):
+            hook = DataProcHook(gcp_conn_id=self.gcp_conn_id,
+                                delegate_to=self.delegate_to)
+            job = hook.create_job_template(self.task_id, self.cluster_name, "sparkJob",
+                                           self.dataproc_properties)
+            job.set_main(self.main_jar, self.main_class)
+            job.add_args(self.arguments)
+            job.add_jar_file_uris(self.dataproc_jars)
+            job.add_archive_uris(self.archives)
+            job.add_file_uris(self.files)
+            job.set_job_name(self.job_name)
+            hook.submit(self.project_id, job.build(), self.region)
+
+    run_job = PatchedDataProcSparkOperator(
         task_id='run_job',
-        main_class='com.example.Main',
+        project_id=Variable.get('project'),
+        main_class='com.google.cloud.example.BigQueryConnectorExample',
         arguments=[
             '{{ds_nodash}}',
             Variable.get('project'),
