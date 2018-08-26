@@ -27,3 +27,14 @@ libraryDependencies += "com.google.cloud.bigdataoss" % "bigquery-connector" % "0
 libraryDependencies += "com.google.api-client" % "google-api-client" % "1.25.0" exclude("com.google.guava", "guava")
 
 libraryDependencies += "org.scalatest" %% "scalatest" % "3.0.4" % "test"
+
+assemblyOption in assembly := (assemblyOption in assembly).value.copy(includeScala = false)
+
+assemblyMergeStrategy in assembly := {
+  case PathList("META-INF", _) => MergeStrategy.discard
+  case _ => MergeStrategy.first
+}
+
+assemblyShadeRules in assembly := Seq(
+  ShadeRule.rename("com.google.common.**" -> "shadegooglecommon.@1").inAll
+)
