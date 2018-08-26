@@ -126,5 +126,6 @@ with dag:
         trigger_rule='one_success'
     )
 
-    start >> create_cluster >> run_job >> delete_cluster >> end
-    start >> run_job >> delete_cluster >> end
+    start >> create_cluster >> run_job
+    start >> run_job
+    run_job >> delete_cluster >> end
