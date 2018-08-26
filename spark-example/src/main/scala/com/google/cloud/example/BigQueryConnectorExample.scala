@@ -18,10 +18,24 @@ import com.google.cloud.hadoop.io.bigquery.BigQueryConfiguration
 import com.google.cloud.hadoop.io.bigquery.GsonBigQueryInputFormat
 import com.google.gson.JsonObject
 import org.apache.hadoop.io.LongWritable
+import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{Dataset, SparkSession}
 
-object Main {
+
+/** An example Spark Job which reads from a BigQuery table and outputs to parquet in GCS */
+object BigQueryConnectorExample {
+  final val AppName = "BigQueryConnectorExample"
+
+  def getBigQueryTableAsJsonObjects(sc: SparkContext, project: String, dataset: String, table: String, bucket: String, prefix: String): RDD[JsonObject] = {
+    @transient val conf = sc.hadoopConfiguration
+    val fullyQualifiedInputTableId = s"$project:$dataset.$table"
+    conf.set(BigQueryConfiguration.PROJECT_ID_KEY, project)
+    conf.set(BigQueryConfiguration.GCS_BUCKET_KEY, bucket)
+    conf.set(BigQueryConfiguration.TEMP_GCS_PATH_KEY, s"gs://$bucket$prefix/tmp/")
+    BigQueryConfiguration.configureBigQueryInput(conf, fullyQualifiedInputTableId)
+    sc.newAPIHadoopRDD(conf, classOf[GsonBigQueryInputFormat], classOf[LongWritable], classOf[JsonObject]).map(_._2)
+  }
 
   def jsonObjectToElement(json: JsonObject): Element = {
     Element(
@@ -42,30 +56,15 @@ object Main {
     val bucket = args(4)
     val prefix = args(5)
 
-    val spark = SparkSession
-      .builder
-      .appName("BigQueryConnectorExample")
-      .getOrCreate()
+    val spark = SparkSession.builder.appName(AppName).getOrCreate()
 
     import spark.implicits._
 
     val sc = spark.sparkContext
 
-    @transient
-    val conf = sc.hadoopConfiguration
-    val fullyQualifiedInputTableId = s"$project:$dataset.$table"
-    conf.set(BigQueryConfiguration.PROJECT_ID_KEY, project)
-    conf.set(BigQueryConfiguration.GCS_BUCKET_KEY, bucket)
-    conf.set(BigQueryConfiguration.TEMP_GCS_PATH_KEY, s"$prefix/tmp/")
-    BigQueryConfiguration.configureBigQueryInput(conf, fullyQualifiedInputTableId)
+    val tableData: RDD[JsonObject] = getBigQueryTableAsJsonObjects(sc, project, dataset, table, bucket, prefix)
 
-    val tableData: RDD[(LongWritable, JsonObject)] = sc.newAPIHadoopRDD(
-      conf,
-      classOf[GsonBigQueryInputFormat],
-      classOf[LongWritable],
-      classOf[JsonObject])
-
-    val ds: Dataset[Element] = tableData.map(x => jsonObjectToElement(x._2)).toDS()
+    val ds: Dataset[Element] = tableData.map(jsonObjectToElement).toDS()
 
     ds.limit(100).write.parquet(s"gs://$bucket$prefix/output/$partition.parquet")
     spark.stop()
